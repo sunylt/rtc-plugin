@@ -7,6 +7,11 @@
 #include <deque>
 #include <vector>
 #include <cstdint>
+#include <atomic>
+#include <memory>
+#include <thread>
+#include <mutex>
+#include <algorithm>
 
 using namespace agora;
 using namespace agora::rtc;
@@ -38,6 +43,35 @@ private:
 	mutable std::mutex m_mutex;
 };
 
+struct VideoFrameItem {
+	std::vector<uint8_t> pixel;
+	int64_t renderTimeMs = 0;
+	int64_t enqueueTimeMs = 0;
+	uint32_t width = 0;
+	uint32_t height = 0;
+	uint32_t stride = 0;
+	uint32_t format = 0;
+	agora::media::base::ColorSpace colorSpace;
+};
+
+class VideoDelayBuffer {
+public:
+	explicit VideoDelayBuffer(int delayMs, size_t maxFrames = 120);
+
+	bool push(VideoFrameItem&& item, int64_t nowMs);
+	bool pop(VideoFrameItem& outFrame, int64_t nowMs);
+	void clear();
+	size_t size() const;
+	size_t capacity() const;
+	void setDelayMs(int delayMs);
+
+private:
+	std::deque<VideoFrameItem> m_queue;
+	int m_delayMs = 0;
+	size_t m_maxFrames = 120;
+	mutable std::mutex m_mutex;
+};
+
 class  MediaPushEngine :
 	public IPlugin
 {
@@ -55,25 +89,40 @@ public:
 
 	void SetAudioDelay(int delayMs);
 	int GetAudioDelay() const;
+	agora::rtc::IRtcEngine *GetRtcEngine() const { return m_rtcEngine; }
 
 private:
+	int64_t NowMonotonic() const;
+	int64_t MapTimestamp(uint64_t sourceTimestamp, bool isVideo);
+	void StopThreads();
+
 	agora::rtc::IRtcEngine *m_rtcEngine = nullptr;
 	agora::media::IMediaEngine *m_mediaEngine = nullptr;
 	rtc_video_format m_obsVideo;
 	rtc_audio_format m_obsAudio;
-	unsigned char *m_imgBuffer = nullptr;
 	unsigned char *m_audioBuffer = nullptr;
 	video_track_id_t m_videoId = 0;
 	track_id_t m_audioId = 0;
 	int m_obsColorSpace = 0;
 	agora::media::base::ExternalVideoFrame m_videoFrame;
 	agora::media::IAudioFrameObserver::AudioFrame m_audioFrame;
-	bool m_bStartPush = false;
+	std::atomic<bool> m_bStartPush{false};
 	bool m_bInitialize = false;
-	int m_audioDelayMs = 0;
-	AudioDelayBuffer* m_audioDelayBuffer = nullptr;
+	int m_requestedDelayMs = 0;
+	std::atomic<int> m_audioDelayMs{0};
+	std::atomic<int> m_videoDelayMs{0};
+	std::unique_ptr<AudioDelayBuffer> m_audioDelayBuffer;
+	std::unique_ptr<VideoDelayBuffer> m_videoDelayBuffer;
+	std::thread m_videoThread;
+	std::thread m_audioThread;
+	mutable std::mutex m_stateMutex;
+	std::mutex m_videoTsMutex;
+	std::mutex m_audioTsMutex;
+	int64_t m_videoTsOffset = -1;
+	int64_t m_audioTsOffset = -1;
+	bool m_timerResolutionSet = false;
 };
 
 
 int64_t get_time_stamp();
-int64_t get_timeoffset(IRtcEngine *engine, uint64_t pts);
+

@@ -20,5 +20,9 @@ bool DisablePlugin(PluginPtr plugin) {
 PluginPtr CreateMediaPlugin(void *rtcEnginePtr, uint32_t audioTackId, int colorSpace) {
   auto *plugin =
       new MediaPushEngine((agora::rtc::IRtcEngine *) rtcEnginePtr, audioTackId, colorSpace);
+  if (!plugin->Initialize(audioTackId, colorSpace)) {
+    delete plugin;
+    return nullptr;
+  }
   return (IPlugin *) plugin;
 }

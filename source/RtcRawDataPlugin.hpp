@@ -46,4 +46,6 @@ namespace RawDataApi
 	Napi::Value RawDataPluginInit(const Napi::CallbackInfo &info);
 	Napi::Value EnablePlugin(const Napi::CallbackInfo &info);
 	Napi::Value DisablePlugin(const Napi::CallbackInfo &info);
+	Napi::Value SetAudioDelay(const Napi::CallbackInfo &info);
+	Napi::Value GetAudioDelay(const Napi::CallbackInfo &info);
 }

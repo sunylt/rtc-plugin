@@ -19,17 +19,20 @@ SharedMemory::SharedMemory(const std::wstring &name, DataType type) : name(name)
 	sa.lpSecurityDescriptor = &sd;
 	sa.bInheritHandle = FALSE;
 
-	// ´´½¨¹²ÏíÄÚ´æ
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú´ï¿½
+	SetLastError(ERROR_SUCCESS);
 	m_hMapFile = CreateFileMapping(INVALID_HANDLE_VALUE, 
-			&sa, PAGE_READWRITE, 0, sizeof(SharedMemoryVideoData), 
+			&sa, PAGE_READWRITE, 0,
+			type == VideoData ? sizeof(SharedMemoryVideoData) : sizeof(SharedMemoryAudioData),
 		std::wstring(name.begin(), name.end()).c_str());
+	const bool isNewMapping = GetLastError() != ERROR_ALREADY_EXISTS;
 
 	if (m_hMapFile == NULL) 
 	{
-		throw std::runtime_error("´´½¨¹²ÏíÄÚ´æÊ§°Ü");
+		throw std::runtime_error("ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú´ï¿½Ê§ï¿½ï¿½");
 	}
 
-	// Ó³ÉäÄÚ´æ
+	// Ó³ï¿½ï¿½ï¿½Ú´ï¿½
 	if (type == VideoData) 
 	{
 		m_videoData = (SharedMemoryVideoData *)MapViewOfFile(m_hMapFile, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedMemoryVideoData));
@@ -37,22 +40,23 @@ SharedMemory::SharedMemory(const std::wstring &name, DataType type) : name(name)
 		if (m_videoData == NULL) 
 		{
 			CloseHandle(m_hMapFile);
-			throw std::runtime_error("Ó³Éä¹²ÏíÄÚ´æÊ§°Ü");
+			throw std::runtime_error("Ó³ï¿½ä¹²ï¿½ï¿½ï¿½Ú´ï¿½Ê§ï¿½ï¿½");
 		}
 
-		// ´´½¨»¥³âËø
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 		m_hMutex = CreateMutex(NULL, FALSE, std::wstring(name + L"_mutex").c_str());
 
 		if (m_hMutex == NULL) {
 			UnmapViewOfFile(m_videoData);
 			CloseHandle(m_hMapFile);
-			throw std::runtime_error("´´½¨»¥³âËøÊ§°Ü");
+			throw std::runtime_error("ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê§ï¿½ï¿½");
 		}
 
-		// ³õÊ¼»¯Êý¾Ý
-		m_videoData->isReady = false;
-		m_videoData->isWriting = false;
-		m_videoData->dataSize = 0;
+		if (isNewMapping) {
+			m_videoData->isReady = false;
+			m_videoData->isWriting = false;
+			m_videoData->dataSize = 0;
+		}
 	}
 	else if (type == AudioData) 
 	{
@@ -60,124 +64,137 @@ SharedMemory::SharedMemory(const std::wstring &name, DataType type) : name(name)
 
 		if (m_audioData == NULL) {
 			CloseHandle(m_hMapFile);
-			throw std::runtime_error("Ó³Éä¹²ÏíÄÚ´æÊ§°Ü");
+			throw std::runtime_error("Ó³ï¿½ä¹²ï¿½ï¿½ï¿½Ú´ï¿½Ê§ï¿½ï¿½");
 		}
 
-		// ´´½¨»¥³âËø
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 		m_hMutex = CreateMutex(NULL, FALSE, std::wstring(name + L"_mutex").c_str());
 
 		if (m_hMutex == NULL) {
 			UnmapViewOfFile(m_audioData);
 			CloseHandle(m_hMapFile);
-			throw std::runtime_error("´´½¨»¥³âËøÊ§°Ü");
+			throw std::runtime_error("ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê§ï¿½ï¿½");
 		}
 
-		// ³õÊ¼»¯Êý¾Ý
-		m_audioData->isReady = false;
-		m_audioData->isWriting = false;
-		m_audioData->dataSize = 0;
+		if (isNewMapping) {
+			m_audioData->isReady = false;
+			m_audioData->isWriting = false;
+			m_audioData->dataSize = 0;
+		}
 	}
 }
 
 SharedMemory::SharedMemory(const std::wstring &name, DataType type, bool openExisting) : name(name) 
 {
-	// ´ò¿ªÏÖÓÐ¹²ÏíÄÚ´æ
+	// ï¿½ï¿½ï¿½ï¿½ï¿½Ð¹ï¿½ï¿½ï¿½ï¿½Ú´ï¿½
 	m_hMapFile = OpenFileMapping(FILE_MAP_ALL_ACCESS, FALSE, std::wstring(name.begin(), name.end()).c_str());
 
 	if (m_hMapFile == NULL) {
-		throw std::runtime_error("´ò¿ª¹²ÏíÄÚ´æÊ§°Ü");
+		throw std::runtime_error("ï¿½ò¿ª¹ï¿½ï¿½ï¿½ï¿½Ú´ï¿½Ê§ï¿½ï¿½");
 	}
 
 	if (type == VideoData) {
-		// Ó³ÉäÄÚ´æ
+		// Ó³ï¿½ï¿½ï¿½Ú´ï¿½
 		m_videoData = (SharedMemoryVideoData *)MapViewOfFile(m_hMapFile, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedMemoryVideoData));
 
 		if (m_videoData == NULL) {
 			CloseHandle(m_hMapFile);
-			throw std::runtime_error("Ó³Éä¹²ÏíÄÚ´æÊ§°Ü");
+			throw std::runtime_error("Ó³ï¿½ä¹²ï¿½ï¿½ï¿½Ú´ï¿½Ê§ï¿½ï¿½");
 		}
 
-		// ´ò¿ª»¥³âËø
+		// ï¿½ò¿ª»ï¿½ï¿½ï¿½ï¿½ï¿½
 		m_hMutex = OpenMutex(MUTEX_ALL_ACCESS, FALSE, std::wstring(name + L"_mutex").c_str());
 
 		if (m_hMutex == NULL) {
 			UnmapViewOfFile(m_videoData);
 			CloseHandle(m_hMapFile);
-			throw std::runtime_error("´ò¿ª»¥³âËøÊ§°Ü");
+			throw std::runtime_error("ï¿½ò¿ª»ï¿½ï¿½ï¿½ï¿½ï¿½Ê§ï¿½ï¿½");
 		}
 	}
 	else if (type == AudioData)
 	{
-		// Ó³ÉäÄÚ´æ
+		// Ó³ï¿½ï¿½ï¿½Ú´ï¿½
 		m_audioData = (SharedMemoryAudioData *)MapViewOfFile(m_hMapFile, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedMemoryAudioData));
 
 		if (m_audioData == NULL) {
 			CloseHandle(m_hMapFile);
-			throw std::runtime_error("Ó³Éä¹²ÏíÄÚ´æÊ§°Ü");
+			throw std::runtime_error("Ó³ï¿½ä¹²ï¿½ï¿½ï¿½Ú´ï¿½Ê§ï¿½ï¿½");
 		}
 
-		// ´ò¿ª»¥³âËø
+		// ï¿½ò¿ª»ï¿½ï¿½ï¿½ï¿½ï¿½
 		m_hMutex = OpenMutex(MUTEX_ALL_ACCESS, FALSE, std::wstring(name + L"_mutex").c_str());
 
 		if (m_hMutex == NULL) {
 			UnmapViewOfFile(m_audioData);
 			CloseHandle(m_hMapFile);
-			throw std::runtime_error("´ò¿ª»¥³âËøÊ§°Ü");
+			throw std::runtime_error("ï¿½ò¿ª»ï¿½ï¿½ï¿½ï¿½ï¿½Ê§ï¿½ï¿½");
 		}
 	}
 }
 
 void SharedMemory::writeVideoData(rtc_video_format videoData)
 {
-	// µÈ´ý»¥³âËø
-	WaitForSingleObject(m_hMutex, INFINITE);
-
-	// ±ê¼ÇÕýÔÚÐ´Èë
-	m_videoData->isWriting = true;
-
-	// ¸´ÖÆÊý¾Ý
-	if (videoData.size <= sizeof(m_videoData->videoData)) {
-		memcpy(m_videoData->videoData, videoData.buffer, videoData.size);
-		m_videoData->dataSize = videoData.size;
-		m_videoData->width = videoData.width;
-		m_videoData->height = videoData.height;
-		m_videoData->format = videoData.format;
-		m_videoData->timestamp = videoData.timestamp;
-	} else {
-		throw std::runtime_error("Êý¾Ý´óÐ¡³¬¹ý»º³åÇøÏÞÖÆ");
+	if (m_videoData == nullptr || m_hMutex == nullptr || videoData.buffer == nullptr) return;
+	if (videoData.size > sizeof(m_videoData->videoData)) {
+		OutputDebugStrW(L"Video data exceeds shared memory capacity");
+		return;
 	}
+	// ï¿½È´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+	const DWORD waitResult = WaitForSingleObject(m_hMutex, INFINITE);
+	if (waitResult != WAIT_OBJECT_0 && waitResult != WAIT_ABANDONED) return;
 
-	// ±ê¼ÇÊý¾Ý¾ÍÐ÷
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð´ï¿½ï¿½
+	m_videoData->isWriting = true;
+	MemoryBarrier();
+
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+	memcpy(m_videoData->videoData, videoData.buffer, videoData.size);
+	m_videoData->dataSize = videoData.size;
+	m_videoData->width = videoData.width;
+	m_videoData->height = videoData.height;
+	m_videoData->format = videoData.format;
+	m_videoData->timestamp = videoData.timestamp;
+
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ý¾ï¿½ï¿½ï¿½
 	m_videoData->isReady = true;
+	MemoryBarrier();
 	m_videoData->isWriting = false;
+	MemoryBarrier();
 
-	// ÊÍ·Å»¥³âËø
+	// ï¿½Í·Å»ï¿½ï¿½ï¿½ï¿½ï¿½
 	ReleaseMutex(m_hMutex);
 }
 
 void SharedMemory::writeAudioData(rtc_audio_format audioData)
 {
-	// µÈ´ý»¥³âËø
-	WaitForSingleObject(m_hMutex, INFINITE);
+	// æºç¼“å†²åŒºåªæœ‰ 1920 å­—èŠ‚ï¼ˆrtc_audio_format::bufferï¼‰ï¼Œ
+	// æ ¡éªŒä¸Šé™ä¸èƒ½ç”¨å…±äº«å†…å­˜é‡Œçš„å¤§æ•°ç»„ï¼Œå¦åˆ™è¶Šç•Œè¯»æºæ•°æ®ã€‚
+	if (m_audioData == nullptr || m_hMutex == nullptr || audioData.size > sizeof(audioData.buffer)) return;
+	// ï¿½È´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+	const DWORD waitResult = WaitForSingleObject(m_hMutex, INFINITE);
+	if (waitResult != WAIT_OBJECT_0 && waitResult != WAIT_ABANDONED) return;
 
-	// ±ê¼ÇÕýÔÚÐ´Èë
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð´ï¿½ï¿½
 	m_audioData->isWriting = true;
+	MemoryBarrier();
 
-	// ¸´ÖÆÊý¾Ý
-	if (audioData.size <= sizeof(m_audioData->audioData)) {
-		memcpy(m_audioData->audioData, audioData.buffer, audioData.size);
-		m_audioData->dataSize = audioData.size;
-		m_audioData->timestamp = audioData.timestamp;
-	} else {
-		OutputDebugStrW(L"Êý¾Ý´óÐ¡³¬¹ý»º³åÇøÏÞÖÆ");
-		throw std::runtime_error("Êý¾Ý´óÐ¡³¬¹ý»º³åÇøÏÞÖÆ");
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+	if (audioData.size > 0 && audioData.buffer == nullptr) {
+		m_audioData->isWriting = false;
+		ReleaseMutex(m_hMutex);
+		return;
 	}
+	memcpy(m_audioData->audioData, audioData.buffer, audioData.size);
+	m_audioData->dataSize = audioData.size;
+	m_audioData->timestamp = audioData.timestamp;
 
-	// ±ê¼ÇÊý¾Ý¾ÍÐ÷
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ý¾ï¿½ï¿½ï¿½
 	m_audioData->isReady = true;
+	MemoryBarrier();
 	m_audioData->isWriting = false;
+	MemoryBarrier();
 
-	// ÊÍ·Å»¥³âËø
+	// ï¿½Í·Å»ï¿½ï¿½ï¿½ï¿½ï¿½
 	ReleaseMutex(m_hMutex);
 }
 
@@ -185,11 +202,15 @@ bool SharedMemory::isDataReady(DataType type)
 {
 	if (type == VideoData) 
 	{
-		return m_videoData->isReady && !m_videoData->isWriting;
+		bool ready = m_videoData != nullptr && m_videoData->isReady;
+		MemoryBarrier();
+		return ready && !m_videoData->isWriting;
 	} 
 	else if (type == AudioData)
 	{
-		return m_audioData->isReady && !m_audioData->isWriting;
+		bool ready = m_audioData != nullptr && m_audioData->isReady;
+		MemoryBarrier();
+		return ready && !m_audioData->isWriting;
 	}
 	else
 	{
@@ -200,59 +221,81 @@ bool SharedMemory::isDataReady(DataType type)
 
 bool SharedMemory::readVideoDate(rtc_video_format& videoData)
 {
-	// µÈ´ý»¥³âËø
-	WaitForSingleObject(m_hMutex, INFINITE);
+	if (m_videoData == nullptr || m_hMutex == nullptr || videoData.buffer == nullptr) return false;
+	// ï¿½È´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+	const DWORD waitResult = WaitForSingleObject(m_hMutex, INFINITE);
+	if (waitResult != WAIT_OBJECT_0 && waitResult != WAIT_ABANDONED) return false;
 
-	// ¼ì²éÊý¾ÝÊÇ·ñ¾ÍÐ÷ÇÒÎ´ÔÚÐ´Èë
-	if (!m_videoData->isReady || m_videoData->isWriting) {
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ç·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Î´ï¿½ï¿½Ð´ï¿½ï¿½
+	bool ready = m_videoData->isReady;
+	MemoryBarrier();
+	bool writing = m_videoData->isWriting;
+	if (!ready || writing) {
 		ReleaseMutex(m_hMutex);
 		return false;
 	}
 
-	// ¸´ÖÆÊý¾Ý
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 	videoData.size = m_videoData->dataSize;
 	videoData.width = m_videoData->width;
 	videoData.height = m_videoData->height;
 	videoData.format = m_videoData->format;
 	videoData.timestamp = m_videoData->timestamp;
+	if (videoData.size > sizeof(m_videoData->videoData)) {
+		m_videoData->isReady = false;
+		MemoryBarrier();
+		ReleaseMutex(m_hMutex);
+		return false;
+	}
 
 	if (videoData.buffer && videoData.size <= sizeof(m_videoData->videoData)) {
 		memcpy(videoData.buffer, m_videoData->videoData, videoData.size);
 	}
 
-	// ±ê¼ÇÊý¾ÝÒÑ¶ÁÈ¡
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ñ¶ï¿½È¡
 	m_videoData->isReady = false;
+	MemoryBarrier();
 
-	// ÊÍ·Å»¥³âËø
+	// ï¿½Í·Å»ï¿½ï¿½ï¿½ï¿½ï¿½
 	ReleaseMutex(m_hMutex);
 	return true;
 }
 
 bool SharedMemory::readAudioDate(rtc_audio_format& audioData)
 {
-	// µÈ´ý»¥³âËø
-	WaitForSingleObject(m_hMutex, INFINITE);
+	if (m_audioData == nullptr || m_hMutex == nullptr) return false;
+	// ï¿½È´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+	const DWORD waitResult = WaitForSingleObject(m_hMutex, INFINITE);
+	if (waitResult != WAIT_OBJECT_0 && waitResult != WAIT_ABANDONED) return false;
 
-	// ¼ì²éÊý¾ÝÊÇ·ñ¾ÍÐ÷ÇÒÎ´ÔÚÐ´Èë
-	if (!m_audioData->isReady || m_audioData->isWriting) {
-		OutputDebugStrW(L"¼ì²éÊý¾ÝÊÇ·ñ¾ÍÐ÷ÇÒÎ´ÔÚÐ´Èë");
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ç·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Î´ï¿½ï¿½Ð´ï¿½ï¿½
+	bool ready = m_audioData->isReady;
+	MemoryBarrier();
+	bool writing = m_audioData->isWriting;
+	if (!ready || writing) {
 		ReleaseMutex(m_hMutex);
 		return false;
 	}
 
-	// ¸´ÖÆÊý¾Ý
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 	audioData.size = m_audioData->dataSize;
 	audioData.timestamp = m_audioData->timestamp;
-
-	if (audioData.buffer && audioData.size <= sizeof(m_audioData->audioData)) 
-	{
-		memcpy(audioData.buffer, m_audioData->audioData, audioData.size);
+	// æ³¨æ„ï¼šæ ¡éªŒä¸Šé™å¿…é¡»æ˜¯ç›®æ ‡ç¼“å†²åŒºï¼ˆrtc_audio_format::bufferï¼Œ1920 å­—èŠ‚ï¼‰ï¼Œ
+	// ä¸èƒ½ç”¨å…±äº«å†…å­˜é‡Œçš„å¤§æ•°ç»„ï¼Œå¦åˆ™ dataSize å¼‚å¸¸æ—¶ä¼šè¶Šç•Œå†™åå†…å­˜ã€‚
+	if (audioData.size > sizeof(audioData.buffer)) {
+		m_audioData->isReady = false;
+		MemoryBarrier();
+		ReleaseMutex(m_hMutex);
+		return false;
 	}
 
-	// ±ê¼ÇÊý¾ÝÒÑ¶ÁÈ¡
-	m_audioData->isReady = false;
+	memcpy(audioData.buffer, m_audioData->audioData, audioData.size);
 
-	// ÊÍ·Å»¥³âËø
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ñ¶ï¿½È¡
+	m_audioData->isReady = false;
+	MemoryBarrier();
+
+	// ï¿½Í·Å»ï¿½ï¿½ï¿½ï¿½ï¿½
 	ReleaseMutex(m_hMutex);
 	return true;
 }

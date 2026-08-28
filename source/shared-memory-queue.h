@@ -46,25 +46,25 @@ struct rtc_audio_format {
 //	char *buffer;
 //};
 
-// ¹²ÏíÄÚ´æÊý¾Ý½á¹¹£¨°üº¬¿ØÖÆ¿éºÍÊý¾Ý»º³åÇø£©
+// ï¿½ï¿½ï¿½ï¿½ï¿½Ú´ï¿½ï¿½ï¿½ï¿½Ý½á¹¹ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ¿ï¿½ï¿½ï¿½ï¿½ï¿½Ý»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 #pragma pack(push, 1)
 struct SharedMemoryVideoData {
-	std::atomic<bool> isReady;   // Êý¾ÝÊÇ·ñ¾ÍÐ÷
-	std::atomic<bool> isWriting; // ÊÇ·ñÕýÔÚÐ´Èë
-	uint32_t dataSize;           // Êµ¼ÊÊý¾Ý´óÐ¡
-	uint32_t width;              // ÊÓÆµ¿í¶È
-	uint32_t height;             // ÊÓÆµ¸ß¶È
-	uint32_t format;             // ÊÓÆµ¸ñÊ½
-	uint64_t timestamp;          // Ê±¼ä´Á
-    char videoData[3840 * 2160 * 4];// Êý¾Ý»º³åÇø£¨£©
+	volatile bool isReady;   // ï¿½ï¿½ï¿½ï¿½ï¿½Ç·ï¿½ï¿½ï¿½ï¿½
+	volatile bool isWriting; // ï¿½Ç·ï¿½ï¿½ï¿½ï¿½ï¿½Ð´ï¿½ï¿½
+	uint32_t dataSize;           // Êµï¿½ï¿½ï¿½ï¿½ï¿½Ý´ï¿½Ð¡
+	uint32_t width;              // ï¿½ï¿½Æµï¿½ï¿½ï¿½ï¿½
+	uint32_t height;             // ï¿½ï¿½Æµï¿½ß¶ï¿½
+	uint32_t format;             // ï¿½ï¿½Æµï¿½ï¿½Ê½
+	uint64_t timestamp;          // Ê±ï¿½ï¿½ï¿½
+    char videoData[3840 * 2160 * 4];// ï¿½ï¿½ï¿½Ý»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 };
 
 struct SharedMemoryAudioData {
-	std::atomic<bool> isReady;   // Êý¾ÝÊÇ·ñ¾ÍÐ÷
-	std::atomic<bool> isWriting; // ÊÇ·ñÕýÔÚÐ´Èë
-	uint32_t dataSize;           // Êµ¼ÊÊý¾Ý´óÐ¡
-	uint64_t timestamp;          // Ê±¼ä´Á
-	char audioData[1920 * 1080 * 4];  // Êý¾Ý»º³åÇø£¨£©
+	volatile bool isReady;   // ï¿½ï¿½ï¿½ï¿½ï¿½Ç·ï¿½ï¿½ï¿½ï¿½
+	volatile bool isWriting; // ï¿½Ç·ï¿½ï¿½ï¿½ï¿½ï¿½Ð´ï¿½ï¿½
+	uint32_t dataSize;           // Êµï¿½ï¿½ï¿½ï¿½ï¿½Ý´ï¿½Ð¡
+	uint64_t timestamp;          // Ê±ï¿½ï¿½ï¿½
+	char audioData[1920 * 1080 * 4];  // ï¿½ï¿½ï¿½Ý»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 };
 #pragma pack(pop)
 
@@ -81,20 +81,25 @@ enum DataType
 
 class SharedMemory {
 private:
-	std::wstring name;      // ¹²ÏíÄÚ´æÃû³Æ
-	HANDLE m_hMapFile;        // ¹²ÏíÄÚ´æ¾ä±ú
-	SharedMemoryVideoData *m_videoData = nullptr; // ¹²ÏíÄÚ´æÊý¾ÝÖ¸Õë
+	std::wstring name;      // ï¿½ï¿½ï¿½ï¿½ï¿½Ú´ï¿½ï¿½ï¿½ï¿½ï¿½
+	HANDLE m_hMapFile;        // ï¿½ï¿½ï¿½ï¿½ï¿½Ú´ï¿½ï¿½ï¿½
+	SharedMemoryVideoData *m_videoData = nullptr; // ï¿½ï¿½ï¿½ï¿½ï¿½Ú´ï¿½ï¿½ï¿½ï¿½ï¿½Ö¸ï¿½ï¿½
 	SharedMemoryAudioData *m_audioData = nullptr;
-	HANDLE m_hMutex = nullptr;          // »¥³âËø¾ä±ú
+	HANDLE m_hMutex = nullptr;          // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
 public:
-	// ¹¹Ôìº¯Êý£¨´´½¨ÐÂµÄ¹²ÏíÄÚ´æ£©
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ìº¯ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ÂµÄ¹ï¿½ï¿½ï¿½ï¿½Ú´æ£©
 	explicit SharedMemory(const std::wstring &name, DataType type);
 
-	// ¹¹Ôìº¯Êý£¨´ò¿ªÏÖÓÐ¹²ÏíÄÚ´æ£©
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ìº¯ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð¹ï¿½ï¿½ï¿½ï¿½Ú´æ£©
 	explicit SharedMemory(const std::wstring &name, DataType type, bool openExisting);
 
-	// Îö¹¹º¯Êý
+	SharedMemory(const SharedMemory&) = delete;
+	SharedMemory& operator=(const SharedMemory&) = delete;
+	SharedMemory(SharedMemory&&) = delete;
+	SharedMemory& operator=(SharedMemory&&) = delete;
+
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 	~SharedMemory()
 	{
 		if (m_videoData) {
@@ -111,44 +116,56 @@ public:
 		}
 	}
 
-	// Ð´ÈëÊý¾Ý
+	// Ð´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 	void writeVideoData(rtc_video_format videoData);
 	void writeAudioData(rtc_audio_format audioData);
 
-	// ¶ÁÈ¡Êý¾Ý
+	// ï¿½ï¿½È¡ï¿½ï¿½ï¿½ï¿½
 	bool readVideoDate(rtc_video_format &videoData);
 	bool readAudioDate(rtc_audio_format &audioData);
 	bool readData(char *buffer, uint32_t &size, uint32_t &width, uint32_t &height, uint32_t &format, uint64_t &timestamp)
 	{
-		// µÈ´ý»¥³âËø
-		WaitForSingleObject(m_hMutex, INFINITE);
+		if (m_videoData == nullptr || m_hMutex == nullptr) return false;
+		// ï¿½È´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+		const DWORD waitResult = WaitForSingleObject(m_hMutex, INFINITE);
+		if (waitResult != WAIT_OBJECT_0 && waitResult != WAIT_ABANDONED) return false;
 
-		// ¼ì²éÊý¾ÝÊÇ·ñ¾ÍÐ÷ÇÒÎ´ÔÚÐ´Èë
-		if (!m_videoData->isReady || m_videoData->isWriting) {
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ç·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Î´ï¿½ï¿½Ð´ï¿½ï¿½
+		bool ready = m_videoData->isReady;
+		MemoryBarrier();
+		bool writing = m_videoData->isWriting;
+		if (!ready || writing) {
 			ReleaseMutex(m_hMutex);
 			return false;
 		}
 
-		// ¸´ÖÆÊý¾Ý
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 		size = m_videoData->dataSize;
 		width = m_videoData->width;
 		height = m_videoData->height;
 		format = m_videoData->format;
 		timestamp = m_videoData->timestamp;
 
-		if (buffer && size <= sizeof(m_videoData->videoData)) {
+		if (size > sizeof(m_videoData->videoData)) {
+			m_videoData->isReady = false;
+			MemoryBarrier();
+			ReleaseMutex(m_hMutex);
+			return false;
+		}
+		if (buffer && size > 0) {
 			memcpy(buffer, m_videoData->videoData, size);
 		}
 
-		// ±ê¼ÇÊý¾ÝÒÑ¶ÁÈ¡
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ñ¶ï¿½È¡
 		m_videoData->isReady = false;
+		MemoryBarrier();
 
-		// ÊÍ·Å»¥³âËø
+		// ï¿½Í·Å»ï¿½ï¿½ï¿½ï¿½ï¿½
 		ReleaseMutex(m_hMutex);
 		return true;
 	}
 
-	// ¼ì²éÊý¾ÝÊÇ·ñ¾ÍÐ÷
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ç·ï¿½ï¿½ï¿½ï¿½
 	bool isDataReady(DataType type);
 
 };
