@@ -189,12 +189,8 @@ MediaPushEngine::MediaPushEngine(agora::rtc::IRtcEngine *rtc_engine,
 
 MediaPushEngine ::~MediaPushEngine()
 {
-	// 只有确实在推流时才通知 OBS 停止，避免已经 disable 过或从未 enable 时重复发 stop。
-	bool wasRunning = m_bStartPush.exchange(false);
+	// StopThreads 内部会保证 start/stop 事件严格成对，不会重复发 stop。
 	StopThreads();
-	if (wasRunning && g_stopPush != nullptr) {
-		SetEvent(g_stopPush);
-	}
 	if (g_startPush != nullptr) {
 		CloseHandle(g_startPush);
 		g_startPush = nullptr;
@@ -241,10 +237,8 @@ bool MediaPushEngine::Initialize(track_id_t audioId, int colorSpace)
 	m_audioId = audioId;
 	m_obsColorSpace = colorSpace;
 	{
-		std::lock_guard<std::mutex> lockVideo(m_videoTsMutex);
-		std::lock_guard<std::mutex> lockAudio(m_audioTsMutex);
-		m_videoTsOffset = -1;
-		m_audioTsOffset = -1;
+		std::lock_guard<std::mutex> lock(m_tsMutex);
+		m_sharedTsOffset = -1;
 	}
 	m_bInitialize = true;
 	return true;
@@ -335,8 +329,9 @@ bool MediaPushEngine::EnablePlugin()
   m_audioFrame = agora::media::IAudioFrameObserver::AudioFrame();
   m_bStartPush.store(true);
   // 真正的“启动”信号：只有 EnablePlugin 真正开始运行时才通知 OBS 恢复写帧。
-  // 由 DisablePlugin 负责发“停止”，避免 disable→init→enable 时信号不成对。
+  // 停止信号由 SignalObsStop 通过 m_obsStarted 保证成对且只发一次。
   if (g_startPush != nullptr) {
+    m_obsStarted.store(true);
     SetEvent(g_startPush);
   }
   // 提高定时器精度，否则 Sleep(1)/Sleep(5) 实际粒度约为 15.6ms，
@@ -349,6 +344,8 @@ bool MediaPushEngine::EnablePlugin()
       ReadAudioFromMemory();
   } catch (const std::exception& e) {
       OutputDebugStringA(e.what());
+      // start 事件已发出，失败路径必须补发 stop，保持事件配对。
+      SignalObsStop();
       StopThreads();
       return false;
   }
@@ -357,14 +354,17 @@ bool MediaPushEngine::EnablePlugin()
 
 bool MediaPushEngine::DisablePlugin()
 {
-	// 幂等：只有“确实在推流”时才停线程并通知 OBS 停止，
-	// 停用后再次调用直接返回，不会重复发 stop 打破信号配对。
-	bool wasRunning = m_bStartPush.exchange(false);
+	// 幂等：StopThreads 内部通过 m_obsStarted 保证 stop 事件只发一次，
+	// 重复调用不会打破信号配对。
 	StopThreads();
-	if (wasRunning && g_stopPush != nullptr) {
+	return true;
+}
+
+void MediaPushEngine::SignalObsStop()
+{
+	if (m_obsStarted.exchange(false) && g_stopPush != nullptr) {
 		SetEvent(g_stopPush);
 	}
-	return true;
 }
 
 void MediaPushEngine::StopThreads()
@@ -391,14 +391,14 @@ void MediaPushEngine::StopThreads()
         m_audioDelayBuffer.reset();
         m_videoDelayBuffer.reset();
     }
-    // 复位时间戳偏移：Disable 后若不做二次 Initialize，下次 Enable 时
+    // 复位共享时间戳锚点：Disable 后若不做二次 Initialize，下次 Enable 时
     // MapTimestamp 会基于旧的锚点映射，导致时间戳残留错乱。
     {
-        std::lock_guard<std::mutex> lockVideo(m_videoTsMutex);
-        std::lock_guard<std::mutex> lockAudio(m_audioTsMutex);
-        m_videoTsOffset = -1;
-        m_audioTsOffset = -1;
+        std::lock_guard<std::mutex> lock(m_tsMutex);
+        m_sharedTsOffset = -1;
     }
+    // 工作线程已全部退出后通知 OBS 停止，保证 start/stop 成对。
+    SignalObsStop();
     m_mediaEngine = nullptr;
 }
 
@@ -409,22 +409,20 @@ int64_t MediaPushEngine::NowMonotonic() const
 		: get_time_stamp();
 }
 
-// 将源时间戳映射到 Agora 单调时钟域。音频和视频各自独立锚定，
-// 避免两个流的时间戳基准不同导致互相污染。
-int64_t MediaPushEngine::MapTimestamp(uint64_t sourceTimestamp, bool isVideo)
+// 将源时间戳映射到 Agora 单调时钟域。音频/视频共享同一个映射锚点，
+// 避免两路首帧到达时间不同导致固定音画偏移（注释说明已更新）。
+int64_t MediaPushEngine::MapTimestamp(uint64_t sourceTimestamp)
 {
 	if (sourceTimestamp == 0) {
 		return NowMonotonic();
 	}
-	int64_t &offset = isVideo ? m_videoTsOffset : m_audioTsOffset;
-	std::mutex &mtx = isVideo ? m_videoTsMutex : m_audioTsMutex;
-	std::lock_guard<std::mutex> lock(mtx);
+	std::lock_guard<std::mutex> lock(m_tsMutex);
 	const int64_t now = NowMonotonic();
 	const int64_t src = static_cast<int64_t>(sourceTimestamp);
-	if (offset == -1) {
-		offset = now - src;
+	if (m_sharedTsOffset == -1) {
+		m_sharedTsOffset = now - src;
 	}
-	int64_t ts = src + offset;
+	int64_t ts = src + m_sharedTsOffset;
 	// 防止源时钟与 Agora 时钟速率不一致导致延迟持续累积：
 	// 映射结果超前当前时间超过阈值时重建锚点。
 	if (ts > now + 1000) {
@@ -432,7 +430,7 @@ int64_t MediaPushEngine::MapTimestamp(uint64_t sourceTimestamp, bool isVideo)
 		if (reanchorCount++ % 100 == 0) {
 			OutputDebugStrW(L"MapTimestamp re-anchored: source clock ahead");
 		}
-		offset = now - src;
+		m_sharedTsOffset = now - src;
 		ts = now;
 	}
 	return ts;
@@ -497,8 +495,10 @@ void MediaPushEngine::ReadVideoFromMemory()
       int64_t now = NowMonotonic();
 
       // 延迟队列出队独立于读取流程，避免读取失败/丢帧导致缓冲帧一直滞留。
-      if (m_videoDelayMs > 0 && m_videoDelayBuffer != nullptr) {
+      // nullptr 检查必须在锁内，否则与 SetAudioDelay 中 reset() 存在 TOCTOU 竞争。
+      {
         std::lock_guard<std::mutex> lock(m_stateMutex);
+        if (m_videoDelayMs > 0 && m_videoDelayBuffer != nullptr) {
         VideoFrameItem item;
         while (m_videoDelayBuffer->pop(item, now)) {
           m_videoFrame.buffer = item.pixel.data();
@@ -522,6 +522,7 @@ void MediaPushEngine::ReadVideoFromMemory()
             log += to_wstring(vret);
             OutputDebugStrW(log.c_str());
           }
+        }
         }
       }
 
@@ -561,20 +562,22 @@ void MediaPushEngine::ReadVideoFromMemory()
           }
         }
 
-        const int64_t mappedTs = MapTimestamp(m_obsVideo.timestamp, true);
-        if (m_videoDelayMs > 0 && m_videoDelayBuffer != nullptr) {
-          // 负延迟：画面延后，拷贝帧数据入队，稍后按 renderTimeMs+delay 释放。
+        const int64_t mappedTs = MapTimestamp(m_obsVideo.timestamp);
+        // nullptr 检查必须在锁内，否则与 SetAudioDelay 中 reset() 存在 TOCTOU 竞争。
+        {
           std::lock_guard<std::mutex> lock(m_stateMutex);
-          VideoFrameItem item;
-          item.pixel.assign(m_obsVideo.buffer, m_obsVideo.buffer + m_obsVideo.size);
-          item.renderTimeMs = mappedTs;
-          item.width = m_obsVideo.width;
-          item.height = m_obsVideo.height;
-          item.stride = m_obsVideo.width;
-          item.format = m_obsVideo.format;
-          item.colorSpace = colorSpace;
-          m_videoDelayBuffer->push(std::move(item), now);
-        } else {
+          if (m_videoDelayMs > 0 && m_videoDelayBuffer != nullptr) {
+            // 负延迟：画面延后，拷贝帧数据入队，稍后按 renderTimeMs+delay 释放。
+            VideoFrameItem item;
+            item.pixel.assign(m_obsVideo.buffer, m_obsVideo.buffer + m_obsVideo.size);
+            item.renderTimeMs = mappedTs;
+            item.width = m_obsVideo.width;
+            item.height = m_obsVideo.height;
+            item.stride = m_obsVideo.width;
+            item.format = m_obsVideo.format;
+            item.colorSpace = colorSpace;
+            m_videoDelayBuffer->push(std::move(item), now);
+          } else {
           // 零/正延迟：画面即时推送。
           m_videoFrame.timestamp = mappedTs;
           m_videoFrame.buffer = m_obsVideo.buffer;
@@ -597,11 +600,14 @@ void MediaPushEngine::ReadVideoFromMemory()
             OutputDebugStrW(log.c_str());
           }
         }
+        }
       }
     }
     } catch (const std::exception& e) {
       OutputDebugStringA(e.what());
       m_bStartPush.store(false);
+      // 线程异常退出时也必须通知 OBS 停止写帧，保持事件配对。
+      SignalObsStop();
     }
   });
 }
@@ -689,7 +695,7 @@ void MediaPushEngine::ReadAudioFromMemory()
 						}
 					}
 					memcpy_s(m_audioBuffer, kAudioFrameBytes, m_obsAudio.buffer, m_obsAudio.size);
-					const int64_t time = MapTimestamp(m_obsAudio.timestamp, false);
+					const int64_t time = MapTimestamp(m_obsAudio.timestamp);
 					std::lock_guard<std::mutex> lock(m_stateMutex);
 					if (m_audioDelayMs > 0 && m_audioDelayBuffer != nullptr) {
 						m_audioDelayBuffer->push(m_audioBuffer, kAudioFrameBytes, time, now);
@@ -752,6 +758,8 @@ void MediaPushEngine::ReadAudioFromMemory()
 		} catch (const std::exception& e) {
 			OutputDebugStringA(e.what());
 			m_bStartPush.store(false);
+			// 线程异常退出时也必须通知 OBS 停止写帧，保持事件配对。
+			SignalObsStop();
 		}
 	});
 }

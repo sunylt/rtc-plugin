@@ -93,8 +93,11 @@ public:
 
 private:
 	int64_t NowMonotonic() const;
-	int64_t MapTimestamp(uint64_t sourceTimestamp, bool isVideo);
+	int64_t MapTimestamp(uint64_t sourceTimestamp);
 	void StopThreads();
+	// 通过 m_obsStarted 的 exchange 保证每次成功的 start 只对应一次 stop，
+	// 正常 Disable、析构或线程异常路径都不会重复发或漏发事件。
+	void SignalObsStop();
 
 	agora::rtc::IRtcEngine *m_rtcEngine = nullptr;
 	agora::media::IMediaEngine *m_mediaEngine = nullptr;
@@ -116,10 +119,10 @@ private:
 	std::thread m_videoThread;
 	std::thread m_audioThread;
 	mutable std::mutex m_stateMutex;
-	std::mutex m_videoTsMutex;
-	std::mutex m_audioTsMutex;
-	int64_t m_videoTsOffset = -1;
-	int64_t m_audioTsOffset = -1;
+	// 音视频共用一个映射锚点，避免两路首帧到达时间不同产生固定同步偏移。
+	std::mutex m_tsMutex;
+	int64_t m_sharedTsOffset = -1;
+	std::atomic<bool> m_obsStarted{false};
 	bool m_timerResolutionSet = false;
 };
 
