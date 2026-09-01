@@ -237,8 +237,10 @@ bool MediaPushEngine::Initialize(track_id_t audioId, int colorSpace)
 	m_audioId = audioId;
 	m_obsColorSpace = colorSpace;
 	{
-		std::lock_guard<std::mutex> lock(m_tsMutex);
-		m_sharedTsOffset = -1;
+		std::lock_guard<std::mutex> lockVideo(m_videoTsMutex);
+		std::lock_guard<std::mutex> lockAudio(m_audioTsMutex);
+		m_videoTsOffset = -1;
+		m_audioTsOffset = -1;
 	}
 	m_bInitialize = true;
 	return true;
@@ -344,8 +346,7 @@ bool MediaPushEngine::EnablePlugin()
       ReadAudioFromMemory();
   } catch (const std::exception& e) {
       OutputDebugStringA(e.what());
-      // start 事件已发出，失败路径必须补发 stop，保持事件配对。
-      SignalObsStop();
+      // start 事件已发出，StopThreads 内部会补发 stop，保持事件配对。
       StopThreads();
       return false;
   }
@@ -391,11 +392,13 @@ void MediaPushEngine::StopThreads()
         m_audioDelayBuffer.reset();
         m_videoDelayBuffer.reset();
     }
-    // 复位共享时间戳锚点：Disable 后若不做二次 Initialize，下次 Enable 时
+    // 复位时间戳偏移：Disable 后若不做二次 Initialize，下次 Enable 时
     // MapTimestamp 会基于旧的锚点映射，导致时间戳残留错乱。
     {
-        std::lock_guard<std::mutex> lock(m_tsMutex);
-        m_sharedTsOffset = -1;
+        std::lock_guard<std::mutex> lockVideo(m_videoTsMutex);
+        std::lock_guard<std::mutex> lockAudio(m_audioTsMutex);
+        m_videoTsOffset = -1;
+        m_audioTsOffset = -1;
     }
     // 工作线程已全部退出后通知 OBS 停止，保证 start/stop 成对。
     SignalObsStop();
@@ -409,20 +412,23 @@ int64_t MediaPushEngine::NowMonotonic() const
 		: get_time_stamp();
 }
 
-// 将源时间戳映射到 Agora 单调时钟域。音频/视频共享同一个映射锚点，
-// 避免两路首帧到达时间不同导致固定音画偏移（注释说明已更新）。
-int64_t MediaPushEngine::MapTimestamp(uint64_t sourceTimestamp)
+// 将源时间戳映射到 Agora 单调时钟域。音频和视频各自独立锚定，
+// 避免两个流的时间戳基准不同导致互相污染（写入侧：视频为 OBS 纳秒
+// 时间戳，音频为 0 或毫秒，本就不是同一时钟域，不能共享锚点）。
+int64_t MediaPushEngine::MapTimestamp(uint64_t sourceTimestamp, bool isVideo)
 {
 	if (sourceTimestamp == 0) {
 		return NowMonotonic();
 	}
-	std::lock_guard<std::mutex> lock(m_tsMutex);
+	int64_t &offset = isVideo ? m_videoTsOffset : m_audioTsOffset;
+	std::mutex &mtx = isVideo ? m_videoTsMutex : m_audioTsMutex;
+	std::lock_guard<std::mutex> lock(mtx);
 	const int64_t now = NowMonotonic();
 	const int64_t src = static_cast<int64_t>(sourceTimestamp);
-	if (m_sharedTsOffset == -1) {
-		m_sharedTsOffset = now - src;
+	if (offset == -1) {
+		offset = now - src;
 	}
-	int64_t ts = src + m_sharedTsOffset;
+	int64_t ts = src + offset;
 	// 防止源时钟与 Agora 时钟速率不一致导致延迟持续累积：
 	// 映射结果超前当前时间超过阈值时重建锚点。
 	if (ts > now + 1000) {
@@ -430,7 +436,7 @@ int64_t MediaPushEngine::MapTimestamp(uint64_t sourceTimestamp)
 		if (reanchorCount++ % 100 == 0) {
 			OutputDebugStrW(L"MapTimestamp re-anchored: source clock ahead");
 		}
-		m_sharedTsOffset = now - src;
+		offset = now - src;
 		ts = now;
 	}
 	return ts;
@@ -562,7 +568,7 @@ void MediaPushEngine::ReadVideoFromMemory()
           }
         }
 
-        const int64_t mappedTs = MapTimestamp(m_obsVideo.timestamp);
+        const int64_t mappedTs = MapTimestamp(m_obsVideo.timestamp, true);
         // nullptr 检查必须在锁内，否则与 SetAudioDelay 中 reset() 存在 TOCTOU 竞争。
         {
           std::lock_guard<std::mutex> lock(m_stateMutex);
@@ -695,7 +701,7 @@ void MediaPushEngine::ReadAudioFromMemory()
 						}
 					}
 					memcpy_s(m_audioBuffer, kAudioFrameBytes, m_obsAudio.buffer, m_obsAudio.size);
-					const int64_t time = MapTimestamp(m_obsAudio.timestamp);
+					const int64_t time = MapTimestamp(m_obsAudio.timestamp, false);
 					std::lock_guard<std::mutex> lock(m_stateMutex);
 					if (m_audioDelayMs > 0 && m_audioDelayBuffer != nullptr) {
 						m_audioDelayBuffer->push(m_audioBuffer, kAudioFrameBytes, time, now);
